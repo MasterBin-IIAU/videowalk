@@ -6,7 +6,7 @@ import torchvision
 import numpy as np
 import utils
 
-EPS = 1e-20
+EPS = 1e-20  # simulate -inf
 
 
 class CRW(nn.Module):
@@ -22,7 +22,7 @@ class CRW(nn.Module):
         self.infer_dims()
         self.selfsim_fc = self.make_head(depth=getattr(args, 'head_depth', 0))
 
-        self.xent = nn.CrossEntropyLoss(reduction="none")
+        self.xent = nn.CrossEntropyLoss(reduction="none")  # xent means cross-entropy
         self._xent_targets = dict()
 
         self.dropout = nn.Dropout(p=self.edgedrop_rate, inplace=False)
@@ -140,22 +140,24 @@ class CRW(nn.Module):
         #################################################################
         walks = dict()
         As = self.affinity(q[:, :, :-1], q[:, :, 1:])  # (B, C, T-1, N), (B, C, T-1, N) --> (B, T-1, N, N)
-        A12s = [self.stoch_mat(As[:, i], do_dropout=True) for i in range(T-1)]
+        A12s = [self.stoch_mat(As[:, i], do_dropout=True) for i in range(T-1)]  # list with T-1 elements, each is (B, N, N)
 
         #################################################### Palindromes
-        if not self.sk_targets:  
+        if not self.sk_targets:
+            # FOR the transition matrix of reverse order, simply transpose the affinity matrix
             A21s = [self.stoch_mat(As[:, i].transpose(-1, -2), do_dropout=True) for i in range(T-1)]
             AAs = []
+            # RECORD Palindromes Transition matrix of different length
             for i in list(range(1, len(A12s))):
                 g = A12s[:i+1] + A21s[:i+1][::-1]
                 aar = aal = g[0]
                 for _a in g[1:]:
                     aar, aal = aar @ _a, _a @ aal
-
+                # self.flip = False, so only aar is used
                 AAs.append((f"l{i}", aal) if self.flip else (f"r{i}", aar))
     
             for i, aa in AAs:
-                walks[f"cyc {i}"] = [aa, self.xent_targets(aa)]
+                walks[f"cyc {i}"] = [aa, self.xent_targets(aa)]  # aa size is (B, N, N), self.xent_targets(aa) size is (BN,)
 
         #################################################### Sinkhorn-Knopp Target (experimental)
         else:   
@@ -174,8 +176,8 @@ class CRW(nn.Module):
         diags = dict()
 
         for name, (A, target) in walks.items():
-            logits = torch.log(A+EPS).flatten(0, -2)
-            loss = self.xent(logits, target).mean()
+            logits = torch.log(A+EPS).flatten(0, -2)  # logits (BN, N) 最后一维是转移到第n个点的概率
+            loss = self.xent(logits, target).mean()  # target (BN,)
             acc = (torch.argmax(logits, dim=-1) == target).float().mean()
             diags.update({f"{H} xent {name}": loss.detach(),
                           f"{H} acc {name}": acc})
@@ -190,7 +192,7 @@ class CRW(nn.Module):
                 if _N > 1: # and False:
                     self.visualize_patches(x, q)
 
-        loss = sum(xents)/max(1, len(xents)-1)
+        loss = sum(xents)/max(1, len(xents)-1)  # average loss of different path length
         
         return q, loss, diags
 
@@ -199,8 +201,8 @@ class CRW(nn.Module):
         key = '%s:%sx%s' % (str(A.device), B,N)
 
         if key not in self._xent_targets:
-            I = torch.arange(A.shape[-1])[None].repeat(B, 1)
-            self._xent_targets[key] = I.view(-1).to(A.device)
+            I = torch.arange(A.shape[-1])[None].repeat(B, 1)  # (B, N)
+            self._xent_targets[key] = I.view(-1).to(A.device)  # (BN,)
 
         return self._xent_targets[key]
 

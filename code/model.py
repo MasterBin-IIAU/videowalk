@@ -34,8 +34,8 @@ class CRW(nn.Module):
 
     def infer_dims(self):
         in_sz = 256
-        dummy = torch.zeros(1, 3, 1, in_sz, in_sz).to(next(self.encoder.parameters()).device)
-        dummy_out = self.encoder(dummy)
+        dummy = torch.zeros(1, 3, 1, in_sz, in_sz).to(next(self.encoder.parameters()).device)  # (N, C, T, H, W)
+        dummy_out = self.encoder(dummy)  # (N, C, T, H, W)
         self.enc_hid_dim = dummy_out.shape[1]
         self.map_scale = in_sz // dummy_out.shape[-1]
 
@@ -55,6 +55,7 @@ class CRW(nn.Module):
         return A * mask
 
     def affinity(self, x1, x2):
+        # (B, C, T-1, N), (B, C, T-1, N)
         in_t_dim = x1.ndim
         if in_t_dim < 4:  # add in time dimension if not there
             x1, x2 = x1.unsqueeze(-2), x2.unsqueeze(-2)
@@ -66,18 +67,19 @@ class CRW(nn.Module):
         return A.squeeze(1) if in_t_dim < 4 else A
     
     def stoch_mat(self, A, zero_diagonal=False, do_dropout=True, do_sinkhorn=False):
-        ''' Affinity -> Stochastic Matrix '''
-
+        """ Affinity -> Stochastic Matrix """
+        # A: (B, N, N)
         if zero_diagonal:
             A = self.zeroout_diag(A)
 
         if do_dropout and self.edgedrop_rate > 0:
+            # Randomly drop some edges
             A[torch.rand_like(A) < self.edgedrop_rate] = -1e20
 
         if do_sinkhorn:
             return utils.sinkhorn_knopp((A/self.temperature).exp(), 
                 tol=0.01, max_iter=100, verbose=False)
-
+        # apply softmax
         return F.softmax(A/self.temperature, dim=-1)
 
     def pixels_to_nodes(self, x):
@@ -92,24 +94,24 @@ class CRW(nn.Module):
                 -- 'maps'  (B x N x C x T x H x W), node feature maps
         '''
         B, N, C, T, h, w = x.shape
-        maps = self.encoder(x.flatten(0, 1))
+        maps = self.encoder(x.flatten(0, 1))  # (1,3,T,H,W) --> (1,C,T,H//8,W//8)
         H, W = maps.shape[-2:]
 
         if self.featdrop_rate > 0:
             maps = self.featdrop(maps)
 
         if N == 1:  # flatten single image's feature map to get node feature 'maps'
-            maps = maps.permute(0, -2, -1, 1, 2).contiguous()
-            maps = maps.view(-1, *maps.shape[3:])[..., None, None]
+            maps = maps.permute(0, -2, -1, 1, 2).contiguous()  # (1,H//8,W//8,C,T)
+            maps = maps.view(-1, *maps.shape[3:])[..., None, None]  # (H//8*W//8, C, T, 1, 1)
             N, H, W = maps.shape[0] // B, 1, 1
 
         # compute node embeddings by spatially pooling node feature maps
-        feats = maps.sum(-1).sum(-1) / (H*W)
+        feats = maps.sum(-1).sum(-1) / (H*W)  # (H//8*W//8, C, T)
         feats = self.selfsim_fc(feats.transpose(-1, -2)).transpose(-1,-2)
         feats = F.normalize(feats, p=2, dim=1)
     
-        feats = feats.view(B, N, feats.shape[1], T).permute(0, 2, 3, 1)
-        maps  =  maps.view(B, N, *maps.shape[1:])
+        feats = feats.view(B, N, feats.shape[1], T).permute(0, 2, 3, 1)  # (1, C, T, H//8*W//8) with normalization
+        maps  =  maps.view(B, N, *maps.shape[1:])  # (1, H//8*W//8, C, T, 1, 1)  without normalization
 
         return feats, maps
 
@@ -125,9 +127,9 @@ class CRW(nn.Module):
         #################################################################
         # Pixels to Nodes 
         #################################################################
-        x = x.transpose(1, 2).view(B, _N, C, T, H, W)
+        x = x.transpose(1, 2).view(B, _N, C, T, H, W)  # infer_downscale (1, 1, 3, 10, 320, 320)
         q, mm = self.pixels_to_nodes(x)
-        B, C, T, N = q.shape
+        B, C, T, N = q.shape  # (B, C, T, N) N is number of node per image, T is the sequence length
 
         if just_feats:
             h, w = np.ceil(np.array(x.shape[-2:]) / self.map_scale).astype(np.int)
@@ -137,7 +139,7 @@ class CRW(nn.Module):
         # Compute walks 
         #################################################################
         walks = dict()
-        As = self.affinity(q[:, :, :-1], q[:, :, 1:])
+        As = self.affinity(q[:, :, :-1], q[:, :, 1:])  # (B, C, T-1, N), (B, C, T-1, N) --> (B, T-1, N, N)
         A12s = [self.stoch_mat(As[:, i], do_dropout=True) for i in range(T-1)]
 
         #################################################### Palindromes

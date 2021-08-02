@@ -281,7 +281,7 @@ class From3D(nn.Module):
         xx = x.permute(0, 2, 1, 3, 4).contiguous().view(-1, C, h, w)
         m = self.model(xx)
 
-        return m.view(N, T, *m.shape[-3:]).permute(0, 2, 1, 3, 4)
+        return m.view(N, T, *m.shape[-3:]).permute(0, 2, 1, 3, 4)  # (N, C, T, H, W)
 
 
 def make_encoder(args):
@@ -316,7 +316,7 @@ def make_encoder(args):
         assert False, 'invalid args.model_type'
 
     if hasattr(net, 'modify'):
-        net.modify(remove_layers=args.remove_layers)
+        net.modify(remove_layers=args.remove_layers)  # here the layer4 is removed
 
     if 'Conv2d' in str(net):
         net = From3D(net)
@@ -353,7 +353,7 @@ class MaskedAttention(nn.Module):
         
         gx, gy = torch.meshgrid(torch.arange(0, H), torch.arange(0, W))
         D = ( (gx[None, None, :, :] - gx[:, :, None, None])**2 + (gy[None, None, :, :] - gy[:, :, None, None])**2 ).float() ** 0.5
-        D = (D < self.radius)[None].float()
+        D = (D < self.radius)[None].float()  # (1,H,W,H,W)
 
         if self.flat:
             D = self.flatten(D)

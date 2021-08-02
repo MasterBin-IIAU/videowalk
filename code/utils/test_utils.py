@@ -82,17 +82,18 @@ def dump_predictions(pred, lbl_set, img, prefix):
     Save:
         1. Predicted labels for evaluation
         2. Label heatmaps for visualization
+    pred: (H/8, W/8, N); lbl_set: (N, 3);
     '''
     sz = img.shape[:-1]
 
     # Upsample predicted soft label maps
     # pred_dist = pred.copy()
-    pred_dist = cv2.resize(pred, sz[::-1])[:]
+    pred_dist = cv2.resize(pred, sz[::-1])[:]  # resize back to the original size (H, W, N)
     
     # Argmax to get the hard label for index
-    pred_lbl = np.argmax(pred_dist, axis=-1)
-    pred_lbl = np.array(lbl_set, dtype=np.int32)[pred_lbl]      
-    img_with_label = np.float32(img) * 0.5 + np.float32(pred_lbl) * 0.5
+    pred_lbl = np.argmax(pred_dist, axis=-1)  # (H, W)
+    pred_lbl = np.array(lbl_set, dtype=np.int32)[pred_lbl]  # (H, W, 3)
+    img_with_label = np.float32(img) * 0.5 + np.float32(pred_lbl) * 0.5  # put the mask on the image
 
     # Visualize label distribution for object 1 (debugging/analysis)
     pred_soft = pred_dist[..., 1]
@@ -131,9 +132,9 @@ def context_index_bank(n_context, long_mem, N):
         if t > 0:
             idx += t + (n_context+1)
             idx[:n_context+t+1] = 0
-        ll.append(idx)
+        ll.append(idx)  # [(L, 1)] here long-term memory bank refers to the initial frame
     # "short" context    
-    ss = [(torch.arange(n_context)[None].repeat(N, 1) +  torch.arange(N)[:, None])[:, :]]
+    ss = [(torch.arange(n_context)[None].repeat(N, 1) +  torch.arange(N)[:, None])[:, :]]  # [(L, 20)] previous 20 frames
 
     return ll + ss
 
@@ -142,29 +143,35 @@ def mem_efficient_batched_affinity(query, keys, mask, temperature, topk, long_me
     '''
     Mini-batched computation of affinity, for memory efficiency
     '''
+    # key: (1,C,L,21,H/8,W/8) query: (1,C,L,H/8,W/8), mask: (1, 1, H/8*W/8, H/8*W/8)
     bsize, pbsize = 2, 100 #keys.shape[2] // 2
     Ws, Is = [], []
 
     for b in range(0, keys.shape[2], bsize):
+        # _K: (1,C,2,21,H/8*W/8); _q: (1,C,2,H/8*W/8)
         _k, _q = keys[:, :, b:b+bsize].to(device), query[:, :, b:b+bsize].to(device)
         w_s, i_s = [], []
 
         for pb in range(0, _k.shape[-1], pbsize):
-            A = torch.einsum('ijklm,ijkn->iklmn', _k, _q[..., pb:pb+pbsize]) 
+            # divide query elements into pieces
+            A = torch.einsum('ijklm,ijkn->iklmn', _k, _q[..., pb:pb+pbsize])   # (1,b,21,H/8*W/8,100)
+            # add "spatial locality mask" to the short-term memory
+            # (L, 20, H/8*W/8, 100) + (1, 1, H/8*W/8, 100) = (L, 20, H/8*W/8, 100)
             A[0, :, len(long_mem):] += mask[..., pb:pb+pbsize].to(device)
-
+            # (1, L, 21, H/8*W/8, H/8*W/8)
             _, N, T, h1w1, hw = A.shape
-            A = A.view(N, T*h1w1, hw)
+            A = A.view(N, T*h1w1, hw)  # (L, 21*H/8*W/8, 100)
             A /= temperature
-
-            weights, ids = torch.topk(A, topk, dim=-2)
+            # Compute similarity with 21 frames (each frame has many nodes), while only pick top-10 nodes
+            weights, ids = torch.topk(A, topk, dim=-2)  # (b, topk, 100)
             weights = F.softmax(weights, dim=-2)
             
             w_s.append(weights.cpu())
             i_s.append(ids.cpu())
 
-        weights = torch.cat(w_s, dim=-1)
-        ids = torch.cat(i_s, dim=-1)
+        weights = torch.cat(w_s, dim=-1)  # (b, topk, H/8*W/8)
+        ids = torch.cat(i_s, dim=-1)  # (b, topk, H/8*W/8)
+        # each element in the list is a tensor with size (topk, H/8*W/8), there are L elements in total
         Ws += [w for w in weights]
         Is += [ii for ii in ids]
 

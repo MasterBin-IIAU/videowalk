@@ -46,8 +46,8 @@ def test_args():
     parser.add_argument('--head-depth', default=-1, type=int,
                         help='depth of mlp applied after encoder (0 = linear)')
 
-    parser.add_argument('--remove-layers', default=['layer4'], help='layer[1-4]')
-    parser.add_argument('--no-l2', default=False, action='store_true', help='')
+    parser.add_argument('--remove-layers', default=['layer4'], help='layer[1-4]')  # here layer4 is removed by default
+    parser.add_argument('--no-l2', default=False, action='store_true', help='')  # use l2-normalization by default
 
     parser.add_argument('--long-mem', default=[0], type=int, nargs='*', help='')
     parser.add_argument('--texture', default=False, action='store_true', help='')

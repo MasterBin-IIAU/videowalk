@@ -69,7 +69,7 @@ def make_lbl_set(lbls):
     lbl_set = [np.zeros(3).astype(np.uint8)]
     count_lbls = [0]    
     
-    flat_lbls_0 = lbls[0].copy().reshape(-1, lbls.shape[-1]).astype(np.uint8)
+    flat_lbls_0 = lbls[0].copy().reshape(-1, lbls.shape[-1]).astype(np.uint8)  # (H*W, 3) or (H*W, 3)
     lbl_set = np.unique(flat_lbls_0, axis=0)
 
     return lbl_set
@@ -106,11 +106,11 @@ class VOSDataset(torch.utils.data.Dataset):
 
         self.filelist = args.filelist
         self.imgSize = args.imgSize
-        self.videoLen = args.videoLen
-        self.mapScale = args.mapScale
+        self.videoLen = args.videoLen  # 20
+        self.mapScale = args.mapScale  # [8, 8]
 
-        self.texture = args.texture
-        self.round = args.round
+        self.texture = args.texture  # False
+        self.round = args.round  # False
         self.use_lab = getattr(args, 'use_lab', False)
 
         f = open(self.filelist, 'r')
@@ -157,7 +157,7 @@ class VOSDataset(torch.utils.data.Dataset):
 
 
     def __getitem__(self, index):
-
+        # index is video-level. video 0, video 1, ...
         folder_path = self.jpgfiles[index]
         label_path = self.lblfiles[index]
 
@@ -171,7 +171,7 @@ class VOSDataset(torch.utils.data.Dataset):
         frame_num = len(os.listdir(folder_path)) + self.videoLen
 
         mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-        img_paths, lbl_paths = self.make_paths(folder_path, label_path)
+        img_paths, lbl_paths = self.make_paths(folder_path, label_path)  # the first self.videoLen frames are the first frame
 
         t000 = time.time()
 
@@ -180,10 +180,10 @@ class VOSDataset(torch.utils.data.Dataset):
 
             img_path, lbl_path = img_paths[i], lbl_paths[i]
             img = load_image(img_path)  # CxHxW
-            lblimg = cv2.imread(lbl_path)
+            lblimg = cv2.imread(lbl_path)  # (H,W,3)
 
             ht, wd = img.size(1), img.size(2)
-            if self.imgSize > 0:
+            if self.imgSize > 0:  # -1
                 newh, neww = ht, wd
 
                 if ht <= wd:
@@ -222,13 +222,13 @@ class VOSDataset(torch.utils.data.Dataset):
 
         ########################################################
         # Load reshaped label information (load cached versions if possible)
-        lbls = np.stack(lbls)
+        lbls = np.stack(lbls)  # (L, H, W, 3); L is frame_num
         prefix = '/' + '/'.join(lbl_paths[0].split('.')[:-1])
 
         # Get lblset
         lblset_path = "%s_%s.npy" % (prefix, 'lblset')
-        lblset = make_lbl_set(lbls)
-
+        lblset = make_lbl_set(lbls)  # find unique color (N, 3) N is the number of instances
+        # deal with cases where labels are given by 0 and 1 (binary image rather than RGB image)
         if np.all((lblset[1:] - lblset[:-1]) == 1):
             lblset = lblset[:, 0:1]
 
@@ -250,13 +250,13 @@ class VOSDataset(torch.utils.data.Dataset):
             oh_path = "%s_%s.npy" % (prefix, 'onehot')
             rz_path = "%s_%s.npy" % (prefix, 'size%sx%s' % (rsz_h, rsz_w))
 
-            onehot = try_np_load(oh_path) 
+            onehot = try_np_load(oh_path)  # (H, W, N) N is the number of instances
             if onehot is None:
                 print('computing onehot lbl for', oh_path)
                 onehot = np.stack([np.all(lbls[i] == ll, axis=-1) for ll in lblset], axis=-1)
                 np.save(oh_path, onehot)
 
-            resized = try_np_load(rz_path)
+            resized = try_np_load(rz_path)  # resized one-hot label
             if resized is None:
                 print('computing resized lbl for', rz_path)
                 resized = cv2.resize(np.float32(onehot), (rsz_w, rsz_h), cv2.INTER_LINEAR)
@@ -279,10 +279,10 @@ class VOSDataset(torch.utils.data.Dataset):
 
         ########################################################
         
-        imgs = torch.stack(imgs)
-        imgs_orig = torch.stack(imgs_orig)
-        lbls_tensor = torch.from_numpy(np.stack(lbls))
-        lbls_resize = np.stack(resizes)
+        imgs = torch.stack(imgs)  # (L, 3, H, W) normalized by mean and std
+        imgs_orig = torch.stack(imgs_orig)  # (L, 3, H, W)
+        lbls_tensor = torch.from_numpy(np.stack(lbls))  # (L, H, W, 3)
+        lbls_resize = np.stack(resizes)  # (L, H/8, W/8, N)  N is the number of instances
 
         assert lbls_resize.shape[0] == len(meta['lbl_paths'])
 

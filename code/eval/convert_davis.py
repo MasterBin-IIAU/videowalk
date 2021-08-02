@@ -34,6 +34,8 @@ def color2id(c):
     return np.arange(0, palette.shape[0])[np.all(palette == c, axis=-1)]
 
 def convert_dir(i):
+    '''感觉其实就是差在了RGB和BGR上，直接调整一下通道顺序就行了，没有必要这么麻烦
+    回头可以试试，是不是只需要调换下颜色通道顺序就行'''
     fname = jpglist[i]
     gtfolder = annotations_folder + fname + '/'
     outfolder = out_folder + fname + '/'
@@ -51,12 +53,12 @@ def convert_dir(i):
         outname = outfolder + "{:05d}.png".format(j)
         inname  = current_folder + str(i) + '_' + str(j) + '_mask.png'
 
-        lblimg  = cv2.imread(inname)
-        flat_lblimg = lblimg.reshape(-1, 3)
+        lblimg  = cv2.imread(inname)  # (H, W, 3)
+        flat_lblimg = lblimg.reshape(-1, 3)  # (HW, 3)
         lblidx  = np.zeros((lblimg.shape[0], lblimg.shape[1]))
         lblidx2  = np.zeros((lblimg.shape[0], lblimg.shape[1]))
 
-        colors = np.unique(flat_lblimg, axis=0)
+        colors = np.unique(flat_lblimg, axis=0)  # (N, 3) N is the number of instances
 
         for c in colors:
             cid = color2id(c)
